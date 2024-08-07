@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Crazy 3D Interactive Globe</title>
+    <title>Advanced 3D Interactive Globe</title>
     <style>
         body { margin: 0; overflow: hidden; font-family: Arial, sans-serif; }
         canvas { display: block; }
@@ -15,6 +15,7 @@
             background: rgba(0,0,0,0.7);
             padding: 10px;
             border-radius: 5px;
+            transition: all 0.3s ease;
         }
         .slider-container {
             margin-bottom: 10px;
@@ -24,6 +25,35 @@
         }
         #color-picker {
             margin-top: 10px;
+        }
+        #info-panel {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            background: rgba(0,0,0,0.7);
+            color: #fff;
+            padding: 10px;
+            border-radius: 5px;
+            display: none;
+        }
+        #toggle-ui {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: #007bff;
+            color: #fff;
+            border: none;
+            padding: 10px;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        .pulsating {
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
         }
     </style>
 </head>
@@ -42,28 +72,32 @@
             <input type="color" id="color-picker" value="#00ffff">
         </div>
     </div>
+    <div id="info-panel"></div>
+    <button id="toggle-ui" class="pulsating">Toggle UI</button>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://unpkg.com/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <script>
-        let scene, camera, renderer, globe, moon, stars, atmosphere;
+        let scene, camera, renderer, globe, moon, stars, atmosphere, controls;
         let rotationSpeed = 0.005;
         let moonSpeed = 0.01;
+        let highlightedCountry;
 
         function init() {
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-            renderer = new THREE.WebGLRenderer();
+            renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             document.body.appendChild(renderer.domElement);
 
             // Globe
-            const globeGeometry = new THREE.SphereGeometry(5, 32, 32);
+            const globeGeometry = new THREE.SphereGeometry(5, 64, 64);
             const globeTexture = new THREE.TextureLoader().load('https://threejs.org/examples/textures/land_ocean_ice_cloud_2048.jpg');
             const globeMaterial = new THREE.MeshPhongMaterial({ map: globeTexture });
             globe = new THREE.Mesh(globeGeometry, globeMaterial);
             scene.add(globe);
 
             // Atmosphere
-            const atmosphereGeometry = new THREE.SphereGeometry(5.2, 32, 32);
+            const atmosphereGeometry = new THREE.SphereGeometry(5.2, 64, 64);
             const atmosphereMaterial = new THREE.MeshPhongMaterial({
                 color: 0x00ffff,
                 transparent: true,
@@ -104,17 +138,26 @@
 
             camera.position.z = 15;
 
+            // OrbitControls
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.rotateSpeed = 0.5;
+
             // Event listeners
             window.addEventListener('resize', onWindowResize, false);
             document.getElementById('rotation-speed').addEventListener('input', updateRotationSpeed);
             document.getElementById('moon-speed').addEventListener('input', updateMoonSpeed);
             document.getElementById('color-picker').addEventListener('input', updateAtmosphereColor);
+            document.getElementById('toggle-ui').addEventListener('click', toggleUI);
+            renderer.domElement.addEventListener('click', onGlobeClick);
 
             animate();
         }
 
         function animate() {
             requestAnimationFrame(animate);
+            controls.update();
             globe.rotation.y += rotationSpeed;
             atmosphere.rotation.y += rotationSpeed;
             moon.position.applyAxisAngle(new THREE.Vector3(0, 1, 0), moonSpeed);
@@ -137,6 +180,68 @@
 
         function updateAtmosphereColor(event) {
             atmosphere.material.color.setHex(parseInt(event.target.value.substr(1), 16));
+        }
+
+        function toggleUI() {
+            const uiContainer = document.getElementById('ui-container');
+            uiContainer.style.display = uiContainer.style.display === 'none' ? 'block' : 'none';
+        }
+
+        function onGlobeClick(event) {
+            const mouse = new THREE.Vector2();
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+            const raycaster = new THREE.Raycaster();
+            raycaster.setFromCamera(mouse, camera);
+
+            const intersects = raycaster.intersectObject(globe);
+
+            if (intersects.length > 0) {
+                const lat = 90 - Math.acos(intersects[0].point.y / 5) * 180 / Math.PI;
+                const lon = (270 + Math.atan2(intersects[0].point.x, intersects[0].point.z) * 180 / Math.PI) % 360 - 180;
+
+                highlightCountry(lat, lon);
+                showInfoPanel(lat, lon);
+            }
+        }
+
+        function highlightCountry(lat, lon) {
+            if (highlightedCountry) {
+                scene.remove(highlightedCountry);
+            }
+
+            const highlightGeometry = new THREE.SphereGeometry(5.1, 32, 32);
+            const highlightMaterial = new THREE.MeshBasicMaterial({
+                color: 0xffff00,
+                transparent: true,
+                opacity: 0.3
+            });
+            highlightedCountry = new THREE.Mesh(highlightGeometry, highlightMaterial);
+
+            const phi = (90 - lat) * Math.PI / 180;
+            const theta = (lon + 180) * Math.PI / 180;
+
+            highlightedCountry.position.x = -5 * Math.sin(phi) * Math.cos(theta);
+            highlightedCountry.position.y = 5 * Math.cos(phi);
+            highlightedCountry.position.z = 5 * Math.sin(phi) * Math.sin(theta);
+
+            scene.add(highlightedCountry);
+        }
+
+        function showInfoPanel(lat, lon) {
+            const infoPanel = document.getElementById('info-panel');
+            infoPanel.style.display = 'block';
+            infoPanel.innerHTML = `
+                <h3>Location Info</h3>
+                <p>Latitude: ${lat.toFixed(2)}</p>
+                <p>Longitude: ${lon.toFixed(2)}</p>
+                <p>Country: ${getCountryName(lat, lon)}</p>
+            `;
+        }
+
+        function getCountryName(lat, lon) {
+            return "Unknown Country";
         }
 
         init();
